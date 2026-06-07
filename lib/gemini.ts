@@ -2,6 +2,37 @@ import { GoogleGenAI } from "@google/genai";
 import { getServerEnv } from "@/lib/env";
 import type { SearchSource } from "@/lib/discovery-engine";
 
+const MAX_ATTEMPTS = 4;
+const RETRY_DELAY_MS = [1000, 2000, 4000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableGeminiError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const err = error as {
+    name?: string;
+    status?: number;
+    code?: number;
+    message?: string;
+  };
+
+  if (err.status === 503 || err.code === 503) {
+    return true;
+  }
+
+  const message = typeof err.message === "string" ? err.message : "";
+  return (
+    message.includes('"code":503') ||
+    message.includes('"status":"UNAVAILABLE"') ||
+    /high demand|overloaded|try again later/i.test(message)
+  );
+}
+
 function buildPrompt(
   query: string,
   sources: SearchSource[],
@@ -46,16 +77,38 @@ export async function generateAnswer(
 ): Promise<string> {
   const env = getServerEnv();
   const ai = new GoogleGenAI({ apiKey: env.geminiApiKey });
+  const contents = buildPrompt(query, sources, departmentLabel);
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: buildPrompt(query, sources, departmentLabel),
-  });
+  let lastError: unknown;
 
-  const text = response.text?.trim();
-  if (!text) {
-    throw new Error("Gemini returned an empty response");
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents,
+      });
+
+      const text = response.text?.trim();
+      if (!text) {
+        throw new Error("Gemini returned an empty response");
+      }
+
+      return text;
+    } catch (error) {
+      lastError = error;
+
+      const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
+      if (!isRetryableGeminiError(error) || isLastAttempt) {
+        throw error;
+      }
+
+      const delay = RETRY_DELAY_MS[attempt] ?? RETRY_DELAY_MS.at(-1)!;
+      console.warn(
+        `Gemini unavailable (attempt ${attempt + 1}/${MAX_ATTEMPTS}), retrying in ${delay}ms`,
+      );
+      await sleep(delay);
+    }
   }
 
-  return text;
+  throw lastError;
 }
