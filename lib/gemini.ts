@@ -2,7 +2,11 @@ import { GoogleGenAI } from "@google/genai";
 import { getServerEnv } from "@/lib/env";
 import type { SearchSource } from "@/lib/discovery-engine";
 
-function buildPrompt(query: string, sources: SearchSource[]): string {
+function buildPrompt(
+  query: string,
+  sources: SearchSource[],
+  departmentLabel: string,
+): string {
   const context =
     sources.length > 0
       ? sources
@@ -17,6 +21,9 @@ function buildPrompt(query: string, sources: SearchSource[]): string {
 
   return `あなたは社内マニュアルの検索アシスタントです。
 以下の参照情報をもとに、質問に日本語で丁寧に回答してください。
+
+【検索カテゴリ】
+${departmentLabel}
 
 回答ルール:
 - 参照情報の「内容」に根拠がある場合は、その内容を要約して答えてください。
@@ -35,13 +42,14 @@ ${query}`;
 export async function generateAnswer(
   query: string,
   sources: SearchSource[],
+  departmentLabel: string,
 ): Promise<string> {
   const env = getServerEnv();
   const ai = new GoogleGenAI({ apiKey: env.geminiApiKey });
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    contents: buildPrompt(query, sources),
+    contents: buildPrompt(query, sources, departmentLabel),
   });
 
   const text = response.text?.trim();

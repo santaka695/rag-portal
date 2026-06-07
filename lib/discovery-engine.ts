@@ -242,33 +242,14 @@ async function getAccessToken(credentialsJson: string): Promise<string> {
   return token;
 }
 
-type SearchRequestBody = {
-  query: string;
-  pageSize: number;
-  contentSearchSpec: {
-    searchResultMode?: string;
-    snippetSpec?: { returnSnippet: boolean };
-    extractiveContentSpec?: {
-      maxExtractiveSegmentCount?: number;
-    };
-  };
+type ContentSearchSpec = {
+  snippetSpec?: { returnSnippet: boolean };
 };
 
-const CHUNK_SEARCH_SPECS: SearchRequestBody["contentSearchSpec"][] = [
-  {
-    searchResultMode: "CHUNKS",
-    snippetSpec: { returnSnippet: true },
-    extractiveContentSpec: {
-      maxExtractiveSegmentCount: 5,
-    },
-  },
-  {
-    searchResultMode: "CHUNKS",
-    snippetSpec: { returnSnippet: true },
-  },
-  {
-    snippetSpec: { returnSnippet: true },
-  },
+// Standard edition engines do not support CHUNKS or extractiveContentSpec.
+const STANDARD_SEARCH_SPECS: (ContentSearchSpec | undefined)[] = [
+  { snippetSpec: { returnSnippet: true } },
+  undefined,
 ];
 
 async function searchWithServingConfig(
@@ -279,7 +260,7 @@ async function searchWithServingConfig(
 ): Promise<SearchSource[]> {
   let lastError: unknown;
 
-  for (const contentSearchSpec of CHUNK_SEARCH_SPECS) {
+  for (const contentSearchSpec of STANDARD_SEARCH_SPECS) {
     const response = await fetch(
       `https://discoveryengine.googleapis.com/v1/${servingConfig}:search`,
       {
@@ -292,8 +273,8 @@ async function searchWithServingConfig(
         body: JSON.stringify({
           query,
           pageSize: 8,
-          contentSearchSpec,
-        } satisfies SearchRequestBody),
+          ...(contentSearchSpec ? { contentSearchSpec } : {}),
+        }),
       },
     );
 
@@ -304,6 +285,8 @@ async function searchWithServingConfig(
       );
       continue;
     }
+
+    lastError = undefined;
 
     const data = (await response.json()) as SearchResponse;
 
@@ -324,7 +307,10 @@ async function searchWithServingConfig(
   return [];
 }
 
-export async function searchDocuments(query: string): Promise<SearchSource[]> {
+export async function searchDocuments(
+  query: string,
+  engineId: string,
+): Promise<SearchSource[]> {
   const env = getServerEnv();
   const accessToken = await getAccessToken(env.googleCredentialsJson);
   const servingConfigIds = ["default_config", "default_search"];
@@ -336,7 +322,7 @@ export async function searchDocuments(query: string): Promise<SearchSource[]> {
         getServingConfigPath(
           env.gcpProjectId,
           env.discoveryEngineLocation,
-          env.engineId,
+          engineId,
           servingConfigId,
         ),
         query,

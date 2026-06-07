@@ -9,6 +9,12 @@ type SearchSource = {
   uri?: string;
 };
 
+type Department = {
+  id: string;
+  label: string;
+  description: string;
+};
+
 type ChatMessage =
   | { id: string; role: "user"; content: string }
   | { id: string; role: "assistant"; content: string; sources: SearchSource[] };
@@ -161,14 +167,94 @@ function SourceList({ sources }: { sources: SearchSource[] }) {
   );
 }
 
+function DepartmentCards({
+  departments,
+  selectedDepartmentId,
+  onSelect,
+  disabled,
+}: {
+  departments: Department[];
+  selectedDepartmentId: string | null;
+  onSelect: (id: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {departments.map((department) => {
+        const isSelected = selectedDepartmentId === department.id;
+
+        return (
+          <button
+            key={department.id}
+            type="button"
+            disabled={disabled}
+            onClick={() => onSelect(department.id)}
+            className={`rounded-xl border px-4 py-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+              isSelected
+                ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                : "border-zinc-200 bg-white hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+            }`}
+          >
+            <p className="text-sm font-semibold">{department.label}</p>
+            <p
+              className={`mt-1 text-xs leading-5 ${
+                isSelected
+                  ? "text-zinc-200 dark:text-zinc-600"
+                  : "text-zinc-500 dark:text-zinc-400"
+              }`}
+            >
+              {department.description}
+            </p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ChatInterface() {
   const router = useRouter();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingDepartments, setLoadingDepartments] = useState(true);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const pendingScrollId = useRef<string | null>(null);
+
+  const selectedDepartment = useMemo(
+    () => departments.find((department) => department.id === selectedDepartmentId),
+    [departments, selectedDepartmentId],
+  );
+
+  useEffect(() => {
+    async function loadDepartments() {
+      try {
+        const response = await fetch("/api/departments");
+        const data = (await response.json()) as {
+          departments?: Department[];
+          error?: string;
+        };
+
+        if (!response.ok) {
+          setError(data.error ?? "資料カテゴリの取得に失敗しました。");
+          return;
+        }
+
+        setDepartments(data.departments ?? []);
+      } catch {
+        setError("資料カテゴリの取得に失敗しました。");
+      } finally {
+        setLoadingDepartments(false);
+      }
+    }
+
+    void loadDepartments();
+  }, []);
 
   useEffect(() => {
     if (!pendingScrollId.current) {
@@ -195,7 +281,7 @@ export function ChatInterface() {
     event.preventDefault();
 
     const query = input.trim();
-    if (!query || loading) {
+    if (!query || loading || !selectedDepartmentId) {
       return;
     }
 
@@ -215,7 +301,7 @@ export function ChatInterface() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, departmentId: selectedDepartmentId }),
       });
 
       const data = (await response.json()) as ChatResponse & { error?: string };
@@ -244,6 +330,7 @@ export function ChatInterface() {
     setMessages([]);
     setInput("");
     setError("");
+    setSelectedDepartmentId(null);
   }
 
   async function handleLogout() {
@@ -261,7 +348,9 @@ export function ChatInterface() {
               社内マニュアル検索
             </h1>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              PDF マニュアルを検索して AI が回答します。
+              {selectedDepartment
+                ? `検索対象: ${selectedDepartment.label}`
+                : "資料カテゴリを選択してから質問してください。"}
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -286,9 +375,23 @@ export function ChatInterface() {
 
       <main className="flex-1 overflow-y-auto px-4 py-6">
         {messages.length === 0 && !loading ? (
-          <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
-            質問を入力して送信してください。
-          </p>
+          <div className="space-y-4">
+            <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
+              検索する資料カテゴリを選択してください。
+            </p>
+            {loadingDepartments ? (
+              <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
+                カテゴリを読み込み中...
+              </p>
+            ) : (
+              <DepartmentCards
+                departments={departments}
+                selectedDepartmentId={selectedDepartmentId}
+                onSelect={setSelectedDepartmentId}
+                disabled={loading}
+              />
+            )}
+          </div>
         ) : null}
 
         <div className="flex flex-col gap-4">
@@ -347,14 +450,18 @@ export function ChatInterface() {
             type="text"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder="質問を入力してください..."
+            placeholder={
+              selectedDepartment
+                ? `${selectedDepartment.label}について質問してください...`
+                : "先に資料カテゴリを選択してください..."
+            }
             className="flex-1 rounded-lg border border-zinc-300 px-4 py-3 text-zinc-900 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
-            disabled={loading}
+            disabled={loading || !selectedDepartmentId}
             required
           />
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !selectedDepartmentId}
             className="rounded-lg bg-zinc-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
           >
             {loading ? "検索中..." : "送信"}

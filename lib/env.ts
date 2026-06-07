@@ -10,7 +10,6 @@ export function getServerEnv() {
   return {
     gcpProjectId: requireEnv("GCP_PROJECT_ID"),
     discoveryEngineLocation: requireEnv("DISCOVERY_ENGINE_LOCATION"),
-    engineId: requireEnv("ENGINE_ID"),
     geminiApiKey: requireEnv("GEMINI_API_KEY"),
     appPassword: requireEnv("APP_PASSWORD"),
     authSecret: requireEnv("AUTH_SECRET"),
